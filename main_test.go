@@ -1,58 +1,26 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
+	"encoding/json"
 	"testing"
 )
 
-func TestReadUntilDoesNotConsumeFollowingPrompt(t *testing.T) {
-	reader := bufio.NewReader(bytes.NewBufferString("Username:Password:"))
-
-	first, err := readUntil(reader, loginPattern, 1024)
-	if err != nil {
+func TestParseCPUMemory(t *testing.T) {
+	var response cpuMemoryResponse
+	if err := json.Unmarshal([]byte(`{"data":{"cpu":2,"mem":39}}`), &response); err != nil {
 		t.Fatal(err)
 	}
-	if first != "Username:" {
-		t.Fatalf("first prompt = %q, want Username:", first)
-	}
-
-	second, err := readUntil(reader, passwordPattern, 1024)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second != "Password:" {
-		t.Fatalf("second prompt = %q, want Password:", second)
+	if response.Data.CPU != 2 || response.Data.Mem != 39 || response.Logout {
+		t.Fatalf("got cpu=%v mem=%v logout=%v", response.Data.CPU, response.Data.Mem, response.Logout)
 	}
 }
 
-func TestParseCPU(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  float64
-		isErr bool
-	}{
-		{name: "switch output", input: "CPU utilization\r\n---------------\r\nCurrent: 5%\r\nSwitch#", want: 5},
-		{name: "ANSI output", input: "\x1b[H\x1b[JCurrent: 37.5%\r\nSwitch#", want: 37.5},
-		{name: "missing", input: "Switch#", isErr: true},
-		{name: "out of range", input: "Current: 101%", isErr: true},
+func TestParseLogout(t *testing.T) {
+	var response cpuMemoryResponse
+	if err := json.Unmarshal([]byte(`{"logout":true,"reason":"notAuth"}`), &response); err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := parseCPU(test.input)
-			if test.isErr {
-				if err == nil {
-					t.Fatal("expected an error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != test.want {
-				t.Fatalf("got %v, want %v", got, test.want)
-			}
-		})
+	if !response.Logout || response.Reason != "notAuth" {
+		t.Fatalf("got logout=%v reason=%q", response.Logout, response.Reason)
 	}
 }
