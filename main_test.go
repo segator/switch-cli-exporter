@@ -1,6 +1,30 @@
 package main
 
-import "testing"
+import (
+	"bufio"
+	"bytes"
+	"testing"
+)
+
+func TestReadUntilDoesNotConsumeFollowingPrompt(t *testing.T) {
+	reader := bufio.NewReader(bytes.NewBufferString("Username:Password:"))
+
+	first, err := readUntil(reader, loginPattern, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "Username:" {
+		t.Fatalf("first prompt = %q, want Username:", first)
+	}
+
+	second, err := readUntil(reader, passwordPattern, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != "Password:" {
+		t.Fatalf("second prompt = %q, want Password:", second)
+	}
+}
 
 func TestParseCPU(t *testing.T) {
 	tests := []struct {

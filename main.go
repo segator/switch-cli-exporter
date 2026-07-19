@@ -19,11 +19,12 @@ import (
 )
 
 var (
-	ansiPattern   = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
-	cpuPattern    = regexp.MustCompile(`(?im)Current:\s*([0-9]+(?:\.[0-9]+)?)%`)
-	loginPattern  = regexp.MustCompile(`(?im)(Press <Enter> to continue\.\.\.|Username:|Password:|Authentication Failed|[^\r\n]*[#>]\s*$)`)
-	promptPattern = regexp.MustCompile(`(?m)[^\r\n]*[#>]\s*$`)
-	metricEscaper = strings.NewReplacer("\\", "\\\\", "\n", "\\n", "\"", "\\\"")
+	ansiPattern     = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	cpuPattern      = regexp.MustCompile(`(?im)Current:\s*([0-9]+(?:\.[0-9]+)?)%`)
+	loginPattern    = regexp.MustCompile(`(?im)(Press <Enter> to continue\.\.\.|Username:)`)
+	passwordPattern = regexp.MustCompile(`(?im)Password:`)
+	promptPattern   = regexp.MustCompile(`(?m)[^\r\n]*[#>]\s*$`)
+	metricEscaper   = strings.NewReplacer("\\", "\\\\", "\n", "\\n", "\"", "\\\"")
 )
 
 type config struct {
@@ -214,8 +215,7 @@ func loginConsole(reader *bufio.Reader, writer io.Writer, cfg config) error {
 		if cfg.debug {
 			log.Printf("console state: %q", strings.ReplaceAll(clean, cfg.password, "[REDACTED]"))
 		}
-		switch {
-		case strings.Contains(clean, "Press <Enter> to continue..."):
+		if strings.Contains(clean, "Press <Enter> to continue...") {
 			// The firmware redraws this banner after the first Enter. Sending
 			// another Enter is interpreted as an empty username and causes the
 			// next real login attempt to fail.
@@ -223,38 +223,54 @@ func loginConsole(reader *bufio.Reader, writer io.Writer, cfg config) error {
 				_, err = io.WriteString(writer, "\r")
 				continued = true
 			}
-		case strings.Contains(clean, "Username:"):
-			_, err = fmt.Fprintf(writer, "%s\r", cfg.username)
-		case strings.Contains(clean, "Password:"):
-			_, err = fmt.Fprintf(writer, "%s\r", cfg.password)
-		case strings.Contains(clean, "Authentication Failed"):
-			continue
-		case promptPattern.MatchString(clean):
-			return nil
-		default:
+			if err != nil {
+				return err
+			}
 			continue
 		}
-		if err != nil {
-			return err
+		if strings.Contains(clean, "Username:") {
+			break
+		}
+		if step == 11 {
+			return errors.New("console login did not reach a username prompt")
 		}
 	}
-	return errors.New("console login did not reach a command prompt")
+
+	if _, err := fmt.Fprintf(writer, "%s\r", cfg.username); err != nil {
+		return err
+	}
+	output, err := readUntil(reader, passwordPattern, 32*1024)
+	if err != nil {
+		return fmt.Errorf("console login password prompt: %w", err)
+	}
+	if cfg.debug {
+		log.Printf("console state: %q", strings.ReplaceAll(cleanTerminal(output), cfg.password, "[REDACTED]"))
+	}
+	if _, err := fmt.Fprintf(writer, "%s\r", cfg.password); err != nil {
+		return err
+	}
+	output, err = readUntil(reader, promptPattern, 32*1024)
+	if err != nil {
+		return fmt.Errorf("console login prompt: %w", err)
+	}
+	clean := cleanTerminal(output)
+	if strings.Contains(clean, "Authentication Failed") {
+		return errors.New("console login authentication failed")
+	}
+	return nil
 }
 
 func readUntil(reader *bufio.Reader, pattern *regexp.Regexp, limit int) (string, error) {
 	var output strings.Builder
-	buffer := make([]byte, 1024)
 	for output.Len() < limit {
-		n, err := reader.Read(buffer)
-		if n > 0 {
-			output.Write(buffer[:n])
-			clean := cleanTerminal(output.String())
-			if pattern.MatchString(clean) {
-				return clean, nil
-			}
-		}
+		value, err := reader.ReadByte()
 		if err != nil {
 			return output.String(), err
+		}
+		output.WriteByte(value)
+		clean := cleanTerminal(output.String())
+		if pattern.MatchString(clean) {
+			return clean, nil
 		}
 	}
 	return output.String(), errors.New("console output exceeded safety limit")

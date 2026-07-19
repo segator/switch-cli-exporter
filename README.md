@@ -31,5 +31,5 @@ The password is never included in metrics or log messages.
 ## Container
 
 ```text
-ghcr.io/segator/switch-cli-exporter:v0.1.1
+ghcr.io/segator/switch-cli-exporter:v0.1.2
 ```
