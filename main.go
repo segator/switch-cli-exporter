@@ -187,6 +187,12 @@ func scrapeCPU(cfg config) (float64, error) {
 	if err := loginConsole(reader, stdin, cfg); err != nil {
 		return 0, err
 	}
+	// The switch keeps the application-level console session alive unless it
+	// receives an explicit exit command. Closing only the SSH transport can
+	// leave the firmware rejecting subsequent CLI logins.
+	defer func() {
+		_, _ = io.WriteString(stdin, "exit\r")
+	}()
 	if _, err := fmt.Fprintf(stdin, "%s\r", cfg.command); err != nil {
 		return 0, err
 	}
@@ -198,6 +204,7 @@ func scrapeCPU(cfg config) (float64, error) {
 }
 
 func loginConsole(reader *bufio.Reader, writer io.Writer, cfg config) error {
+	continued := false
 	for step := 0; step < 12; step++ {
 		output, err := readUntil(reader, loginPattern, 32*1024)
 		if err != nil {
@@ -209,7 +216,13 @@ func loginConsole(reader *bufio.Reader, writer io.Writer, cfg config) error {
 		}
 		switch {
 		case strings.Contains(clean, "Press <Enter> to continue..."):
-			_, err = io.WriteString(writer, "\r")
+			// The firmware redraws this banner after the first Enter. Sending
+			// another Enter is interpreted as an empty username and causes the
+			// next real login attempt to fail.
+			if !continued {
+				_, err = io.WriteString(writer, "\r")
+				continued = true
+			}
 		case strings.Contains(clean, "Username:"):
 			_, err = fmt.Fprintf(writer, "%s\r", cfg.username)
 		case strings.Contains(clean, "Password:"):
